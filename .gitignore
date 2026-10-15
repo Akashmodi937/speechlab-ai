@@ -1,6 +1,9 @@
 node_modules/
 .next/
 .env
+.env.*
+!.env.example
+!.env.sample
 .env.local
 .venv/
 __pycache__/
@@ -8,3 +11,4 @@ __pycache__/
 .ruff_cache/
 storage/audio_tests/*
 !storage/audio_tests/.gitkeep
+
