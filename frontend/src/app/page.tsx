@@ -1,12 +1,38 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { AudioLines, Mic, Square, Upload } from "lucide-react";
 import { Sidebar } from "@/components/sidebar";
 import { TtsPanel } from "@/components/tts-panel";
 import { languageOptions } from "@/lib/stt-options";
 
-type Run = Record<string, any>;
+type Comparison = {
+  cer_percent?: number | null;
+  wer_percent?: number | null;
+};
+
+type ExternalComparison = {
+  transcript?: string;
+  comparison?: Comparison | null;
+  product_vs_reference?: Comparison | null;
+  detail?: string;
+};
+
+type Run = {
+  [field: string]: unknown;
+  run_id?: string;
+  test_case_id?: string;
+  status?: string;
+  raw_transcript?: string;
+  error?: string;
+  detail?: string;
+  keyterms?: string[];
+  critical_terms?: string[];
+  critical_term_accuracy?: string;
+  critical_term_accuracy_other?: string;
+  reference_comparison?: Comparison | null;
+  external_comparison?: ExternalComparison | null;
+};
 
 function termAccuracy(transcript: string, terms: string[]) {
   if (!terms.length) return "—";
@@ -32,16 +58,15 @@ export default function Dashboard() {
   const [latest, setLatest] = useState<Run | null>(null);
   const [micRecording, setMicRecording] = useState(false);
   const [mediaRecorder, setMediaRecorder] = useState<MediaRecorder | null>(null);
-  const [micChunks, setMicChunks] = useState<Blob[]>([]);
 
-  async function refreshRuns() {
+  const refreshRuns = useCallback(async () => {
     try {
       const response = await fetch(`${apiBase}/audio-tests/runs?limit=100`, { cache: "no-store" });
-      const data = await response.json();
+      const data = await response.json() as { items?: Run[] };
       if (response.ok) setRuns(Array.isArray(data.items) ? data.items : []);
     } catch { /* Keep the form usable when history is unavailable. */ }
-  }
-  useEffect(() => { void refreshRuns(); }, []);
+  }, [apiBase]);
+  useEffect(() => { void refreshRuns(); }, [refreshRuns]);
 
   async function startRecording() {
     try {
@@ -85,7 +110,7 @@ export default function Dashboard() {
     setBusy(true); setNotice("Running Saaras v4 and calculating the comparison…"); setLatest(null);
     try {
       const response = await fetch(`${apiBase}/audio-tests/run`, { method: "POST", body: form });
-      const data = await response.json();
+      const data = await response.json() as Run;
       if (!response.ok) throw new Error(typeof data.detail === "string" ? data.detail : `Request failed (${response.status})`);
       let completed: Run = { ...data, critical_terms: uniqueTerms, critical_term_accuracy: termAccuracy(String(data.raw_transcript || ""), uniqueTerms) };
       if (data.status === "success" && data.run_id && otherTranscript.trim()) {
@@ -93,7 +118,7 @@ export default function Dashboard() {
           method: "POST", headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ provider: "Other Whisper response", model: "Whisper", transcript: otherTranscript.trim() })
         });
-        const compareData = await compareResponse.json();
+        const compareData = await compareResponse.json() as ExternalComparison;
         if (compareResponse.ok) completed = { ...completed, external_comparison: compareData, critical_term_accuracy_other: termAccuracy(otherTranscript, uniqueTerms) };
         else setNotice(`Audio transcribed, but Whisper comparison failed: ${compareData.detail || compareResponse.status}`);
       }
@@ -143,12 +168,12 @@ export default function Dashboard() {
           <div className="border-b border-[#eaecf0] px-5 py-4"><h2 className="text-base font-semibold">Results</h2><p className="mt-1 text-xs text-[#667085]">Only the four requested columns.</p></div>
           <div className="overflow-x-auto"><table className="w-full min-w-[760px] text-left text-sm"><thead className="bg-[#f9fafb] text-xs uppercase tracking-wide text-[#667085]"><tr><th className="px-4 py-3 font-semibold">Test case ID</th><th className="px-4 py-3 font-semibold">Raw Sarvam transcript</th><th className="px-4 py-3 font-semibold">CER / WER</th><th className="px-4 py-3 font-semibold">Critical-term accuracy</th></tr></thead><tbody>
             {(latest ? [latest, ...runs.filter((item) => item.run_id !== latest.run_id)] : runs).map((run) => {
-              const referenceMetrics = run.reference_comparison as Run | undefined;
-              const external = run.external_comparison as Run | undefined;
-              const externalMetrics = external?.comparison as Run | undefined;
+              const referenceMetrics = run.reference_comparison;
+              const external = run.external_comparison;
+              const externalMetrics = external?.comparison;
               const metrics = referenceMetrics || externalMetrics;
               const accuracy = run.critical_term_accuracy || termAccuracy(String(run.raw_transcript || ""), Array.isArray(run.keyterms) ? run.keyterms : Array.isArray(run.critical_terms) ? run.critical_terms : []);
-              return <tr key={String(run.run_id)} className="border-t border-[#eaecf0] align-top"><td className="px-4 py-3 font-medium text-[#344054]">{String(run.test_case_id || "—")}<div className="mt-1 text-xs font-normal text-[#98a2b3]">{String(run.status || "")}</div></td><td className="max-w-[440px] whitespace-pre-wrap px-4 py-3 text-[#344054]">{String(run.raw_transcript || run.error || "—")}{external?.transcript && <div className="mt-3 border-t border-[#eaecf0] pt-2 text-xs text-[#667085]"><b>Whisper:</b> {String(external.transcript)}</div>}</td><td className="whitespace-nowrap px-4 py-3 text-[#344054]">{metrics ? <>{metrics.cer_percent ?? "—"}% / {metrics.wer_percent ?? "—"}%<div className="mt-1 text-xs text-[#667085]">{referenceMetrics ? "vs reference" : "Sarvam vs Whisper"}</div>{external?.product_vs_reference && <div className="mt-1 text-xs text-[#667085]">Whisper vs ref: {String((external.product_vs_reference as Run).cer_percent ?? "—")}% / {String((external.product_vs_reference as Run).wer_percent ?? "—")}%</div>}</> : "Add reference transcript"}</td><td className="px-4 py-3 text-[#344054]">{String(accuracy)}{run.critical_term_accuracy_other && <div className="mt-1 text-xs text-[#667085]">Whisper: {String(run.critical_term_accuracy_other)}</div>}</td></tr>;
+              return <tr key={String(run.run_id)} className="border-t border-[#eaecf0] align-top"><td className="px-4 py-3 font-medium text-[#344054]">{String(run.test_case_id || "—")}<div className="mt-1 text-xs font-normal text-[#98a2b3]">{String(run.status || "")}</div></td><td className="max-w-[440px] whitespace-pre-wrap px-4 py-3 text-[#344054]">{String(run.raw_transcript || run.error || "—")}{external?.transcript && <div className="mt-3 border-t border-[#eaecf0] pt-2 text-xs text-[#667085]"><b>Whisper:</b> {String(external.transcript)}</div>}</td><td className="whitespace-nowrap px-4 py-3 text-[#344054]">{metrics ? <>{metrics.cer_percent ?? "—"}% / {metrics.wer_percent ?? "—"}%<div className="mt-1 text-xs text-[#667085]">{referenceMetrics ? "vs reference" : "Sarvam vs Whisper"}</div>{external?.product_vs_reference && <div className="mt-1 text-xs text-[#667085]">Whisper vs ref: {String(external.product_vs_reference.cer_percent ?? "—")}% / {String(external.product_vs_reference.wer_percent ?? "—")}%</div>}</> : "Add reference transcript"}</td><td className="px-4 py-3 text-[#344054]">{String(accuracy)}{run.critical_term_accuracy_other && <div className="mt-1 text-xs text-[#667085]">Whisper: {String(run.critical_term_accuracy_other)}</div>}</td></tr>;
             })}
             {!runs.length && !latest && <tr><td colSpan={4} className="px-4 py-10 text-center text-sm text-[#667085]">No test runs yet. Add audio above and select Run test.</td></tr>}
           </tbody></table></div>
