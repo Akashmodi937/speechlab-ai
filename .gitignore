@@ -1,0 +1,10 @@
+node_modules/
+.next/
+.env
+.env.local
+.venv/
+__pycache__/
+.pytest_cache/
+.ruff_cache/
+storage/audio_tests/*
+!storage/audio_tests/.gitkeep
